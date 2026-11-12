@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Video</title>
+<!--
+  INBOX VIDEO PAGE — full-screen portrait player opened from a Braze Content Card
+  -------------------------------------------------------------------------------
+  Setup:
+  1. Upload this whole folder (index.html, video.mp4, poster.jpg) to any HTTPS host.
+     The video and poster use relative paths, so nothing else needs editing.
+  2. Replace CTA_URL with the deep link / web URL for the button.
+  3. Replace CLOSE_URL with a deep link back into the app inbox
+     (used only if the page can't go "back").
+  4. In the Content Card, set "On click" -> this page's URL.
+     Tick "Open web URLs inside mobile app" so it opens in the in-app webview.
+  Tracking: Braze logs the card click. Add UTM params to CTA_URL if you need
+  to measure the button separately.
+-->
+<style>
+  :root{
+    --cta-bg:#00B14F;      /* button colour */
+    --cta-fg:#FFFFFF;
+    --safe-top:env(safe-area-inset-top,0px);
+    --safe-bottom:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;background:#000;overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"Sukhumvit Set","Noto Sans Thai","Segoe UI",Roboto,sans-serif}
+  .stage{position:fixed;inset:0;background:#000}
+  video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+
+  /* top / bottom gradients for legibility */
+  .shade{position:absolute;left:0;right:0;pointer-events:none}
+  .shade.top{top:0;height:22%;background:linear-gradient(rgba(0,0,0,.55),transparent)}
+  .shade.bottom{bottom:0;height:34%;background:linear-gradient(transparent,rgba(0,0,0,.75))}
+
+  /* progress bar */
+  .progress{position:absolute;top:calc(var(--safe-top) + 10px);left:16px;right:16px;height:3px;
+    border-radius:3px;background:rgba(255,255,255,.3);overflow:hidden}
+  .progress i{display:block;height:100%;width:0;background:#fff}
+
+  /* round icon buttons */
+  .icon-btn{position:absolute;top:calc(var(--safe-top) + 24px);width:40px;height:40px;border-radius:50%;
+    border:0;background:rgba(0,0,0,.45);color:#fff;display:flex;align-items:center;justify-content:center;
+    cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  .icon-btn svg{width:20px;height:20px}
+  .close{right:16px}
+  .sound{left:16px}
+
+  /* bottom CTA area */
+  .bottom{position:absolute;left:0;right:0;bottom:0;padding:0 20px calc(var(--safe-bottom) + 24px);
+    display:flex;flex-direction:column;gap:10px;align-items:stretch}
+  /* CTA: same timing as Replay. Fades/rises in 0.9s after the end; hides instantly on replay */
+  .cta{display:block;text-align:center;text-decoration:none;background:var(--cta-bg);color:var(--cta-fg);
+    font-size:17px;font-weight:700;padding:15px 20px;border-radius:999px;
+    box-shadow:0 6px 20px rgba(0,0,0,.35);
+    opacity:0;transform:translateY(10px);pointer-events:none;visibility:hidden;
+    transition:opacity .15s ease,transform .15s ease,visibility 0s linear .15s}
+  .ended .cta{opacity:1;transform:translateY(0);pointer-events:auto;visibility:visible;
+    transition:opacity .7s cubic-bezier(.25,.1,.25,1) .9s,transform .7s cubic-bezier(.2,.8,.2,1) .9s,visibility 0s linear .9s}
+  .cta:active{transform:scale(.97)}
+  /* Replay fades/rises in after the CTA has settled; hides instantly on replay */
+  .replay{align-self:center;background:none;border:0;color:#fff;font-size:14px;font-weight:600;
+    padding:6px 12px;display:flex;gap:6px;align-items:center;
+    opacity:0;transform:translateY(10px);pointer-events:none;visibility:hidden;
+    transition:opacity .15s ease,transform .15s ease,visibility 0s linear .15s}
+  .replay svg{width:16px;height:16px}
+  .ended .replay{opacity:1;transform:translateY(0);pointer-events:auto;visibility:visible;
+    transition:opacity .7s cubic-bezier(.25,.1,.25,1) .9s,transform .7s cubic-bezier(.2,.8,.2,1) .9s,visibility 0s linear .9s}
+  .ended .cta{animation:pulse 1.4s ease-in-out 1.6s infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.04)}}
+
+  /* tap-to-play fallback if autoplay is blocked */
+  .play-overlay{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+    background:rgba(0,0,0,.25);border:0;cursor:pointer}
+  .play-overlay span{width:76px;height:76px;border-radius:50%;background:rgba(0,0,0,.55);display:flex;
+    align-items:center;justify-content:center}
+  .play-overlay svg{width:32px;height:32px;margin-left:4px}
+  .blocked .play-overlay{display:flex}
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <video id="vid"
+         src="video.mp4"
+         poster="poster.jpg"
+         autoplay muted playsinline webkit-playsinline preload="auto"></video>
+
+  <div class="shade top"></div>
+  <div class="shade bottom"></div>
+
+  <div class="progress"><i id="bar"></i></div>
+
+  <button class="icon-btn sound" id="soundBtn" aria-label="เปิดเสียง">
+    <svg id="icoMuted" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m23 9-6 6M17 9l6 6"/></svg>
+    <svg id="icoOn" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>
+  </button>
+
+  <button class="icon-btn close" id="closeBtn" aria-label="ปิด">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+  </button>
+
+  <button class="play-overlay" id="playOverlay" aria-label="เล่นวิดีโอ">
+    <span><svg viewBox="0 0 24 24" fill="#fff"><path d="M6 4v16l14-8z"/></svg></span>
+  </button>
+
+  <div class="bottom">
+    <a class="cta" id="cta" href="CTA_URL">กดเก็บคูปอง</a>
+    <button class="replay" id="replayBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.5 15a9 9 0 1 0 2.1-9.4L1 10"/></svg>
+      ดูอีกครั้ง
+    </button>
+  </div>
+</div>
+
+<script>
+(function(){
+  var vid = document.getElementById('vid'),
+      stage = document.getElementById('stage'),
+      bar = document.getElementById('bar'),
+      soundBtn = document.getElementById('soundBtn'),
+      icoMuted = document.getElementById('icoMuted'),
+      icoOn = document.getElementById('icoOn');
+
+  var CLOSE_URL = 'CLOSE_URL';
+  function close(){
+    try { vid.pause(); } catch(e){}
+    if (window.history.length > 1) window.history.back();
+    else window.location.href = CLOSE_URL;
+  }
+
+  function tryPlay(){
+    var p = vid.play();
+    if (p && p.catch) p.then(function(){ stage.classList.remove('blocked'); })
+                       .catch(function(){ stage.classList.add('blocked'); });
+  }
+
+  function setMuted(m){
+    vid.muted = m;
+    icoMuted.style.display = m ? '' : 'none';
+    icoOn.style.display = m ? 'none' : '';
+    soundBtn.setAttribute('aria-label', m ? 'เปิดเสียง' : 'ปิดเสียง');
+  }
+
+  // progress
+  vid.addEventListener('timeupdate', function(){
+    if (vid.duration) bar.style.width = (vid.currentTime / vid.duration * 100) + '%';
+  });
+  vid.addEventListener('ended', function(){ bar.style.width = '100%'; stage.classList.add('ended'); });
+  vid.addEventListener('play', function(){ stage.classList.remove('ended','blocked'); });
+
+  // controls
+  soundBtn.addEventListener('click', function(e){ e.stopPropagation(); setMuted(!vid.muted); if (vid.paused) tryPlay(); });
+  document.getElementById('closeBtn').addEventListener('click', function(e){ e.stopPropagation(); close(); });
+  document.getElementById('playOverlay').addEventListener('click', function(){ setMuted(false); tryPlay(); });
+  document.getElementById('replayBtn').addEventListener('click', function(e){
+    e.stopPropagation();
+    vid.currentTime = 0; tryPlay();
+  });
+
+  // tap the video to pause / resume
+  vid.addEventListener('click', function(){ if (vid.paused) tryPlay(); else vid.pause(); });
+
+  // Pause before leaving so audio doesn't keep playing.
+  document.getElementById('cta').addEventListener('click', function(){ try { vid.pause(); } catch(e){} });
+
+  tryPlay();
+  document.addEventListener('DOMContentLoaded', tryPlay);
+})();
+</script>
+</body>
+</html>
